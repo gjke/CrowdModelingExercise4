@@ -2,54 +2,81 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+fn_dict = {
+    'sigmoid': nn.Sigmoid,
+    'tanh': nn.Tanh
+}
+
 
 class VAE(nn.Module):
-    def __init__(self, x_dim, enc_hid_dim_1, enc_hid_dim_2, z_dim, dec_hid_dim_1, dec_hid_dim_2):
+    def __init__(self, x_dim, enc_hid_dims, z_dim, dec_hid_dims, dec_norm_fn='sigmoid'):
         super(VAE, self).__init__()
 
         self.x_dim = x_dim
+        self.z_dim = z_dim
 
         # encoder layers
-        self.ehl1 = nn.Linear(x_dim, enc_hid_dim_1)
-        self.ehl2 = nn.Linear(enc_hid_dim_1, enc_hid_dim_2)
-        self.eout1 = nn.Linear(enc_hid_dim_2, z_dim)
-        self.eout2 = nn.Linear(enc_hid_dim_2, z_dim)
+        self.encoder = nn.ModuleList(
+            [
+                nn.Linear(x_dim, enc_hid_dims[0]),
+                nn.ReLU(),
+
+            ]
+        )
+        for i in range(1, len(enc_hid_dims)):
+            self.encoder.extend([
+                nn.Linear(enc_hid_dims[i-1], enc_hid_dims[i]),
+                nn.ReLU(),
+            ])
+
+        self.eout1 = nn.Linear(enc_hid_dims[-1], z_dim)
+        self.eout2 = nn.Linear(enc_hid_dims[-1], z_dim)
 
         # decoder layers
-        self.dhl1 = nn.Linear(z_dim, dec_hid_dim_1)
-        self.dhl2 = nn.Linear(dec_hid_dim_1, dec_hid_dim_2)
-        self.dout = nn.Linear(dec_hid_dim_2, x_dim)
-        self.dout_norm = nn.Sigmoid()
+        self.decoder = nn.ModuleList(
+            [
+                nn.Linear(z_dim, dec_hid_dims[0]),
+                nn.ReLU(),
+            ]
+        )
+        for i in range(1, len(dec_hid_dims)):
+            self.decoder.extend([
+                nn.Linear(dec_hid_dims[i-1], enc_hid_dims[i]),
+                nn.ReLU(),
+            ])
+        self.dout = nn.Linear(dec_hid_dims[-1], x_dim)
+        self.dout_norm = fn_dict.get(dec_norm_fn, nn.Sigmoid)()
 
     def encode(self, x):
-        h = F.relu(self.ehl1(x))
-        h = F.relu(self.ehl2(h))
+        y = x
+        for i in range(len(self.encoder)):
+            y = self.encoder[i](y)
         # mu, sigma of p(z|x) = N(z|mu, sigma)
-        return self.eout1(h), self.eout2(h)
+        return self.eout1(y), self.eout2(y)
 
-    def sample(self, mu, sigma):
+    def sample(self, mu, log_var):
+        sigma = torch.exp(0.5*log_var)
         eps = torch.randn_like(sigma)
-        return eps.mul(sigma).add_(mu)  # return z sample
+        return mu + eps*sigma  # return z sample
 
     def decode(self, z):
-        h = F.relu(self.dhl1(z))
-        h = F.relu(self.dhl2(h))
-        return self.dout_norm(self.dout(h))
+        y = z
+        for i in range(len(self.decoder)):
+            y = self.decoder[i](y)
+        return self.dout_norm(self.dout(y))
 
     def forward(self, x):
         mu, log_var = self.encode(x.view(-1, self.x_dim))
-        sigma = torch.exp(0.5*log_var)
-        z = self.sample(mu, torch.exp(0.5*log_var))
-        x_reconstr = self.decode(z)
-        return x_reconstr, mu, sigma
+        z = self.sample(mu, log_var)
+        return self.decode(z), mu, log_var
 
 
-def kl_divergence(mu, sigma):
-    return 0.5 * (sigma**2 + mu**2 - torch.log(sigma) - 1).sum()
+def kl_divergence(mu, log_var):
+    return -0.5 * torch.sum(1 + log_var - mu.pow(2) - log_var.exp())
 
 
-def loss_function(x, x_recon, mu, sigma):
+def loss_function(x, x_recon, mu, log_var):
     return (
-        ((x.view(-1, 784) - x_recon)**2).sum() +  # ~ -log p(x|z)
-        kl_divergence(mu, sigma)
+        ((x.view(-1, x_recon.shape[1]) - x_recon)**2).sum()   # ~ -log p(x|z)
+        + kl_divergence(mu, log_var)
     )
