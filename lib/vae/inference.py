@@ -17,12 +17,12 @@ def encode_batch(model, batch):
 
     Parameters:
         model (VAE): VAE model
-        batch (pytorch.Tensor): input images of size (n, 1, 28, 28), 
+        batch (pytorch.Tensor): input images of size (n, 1, 28, 28),
             where n is the batch length
 
     Returns:
         pytorch.Tensor: latent representasion of the input. Shape: (n, m), where n is
-        the batch length and m is the dimention of the latent space  
+        the batch length and m is the dimention of the latent space
 
     """
     model.eval()
@@ -33,28 +33,28 @@ def encode_batch(model, batch):
     return z
 
 
-def reconstruct(model, batch):
+def reconstruct(model, batch, output_shape=(1, 28, 28)):
     """
     Embeds the input into the latent space
 
     Parameters:
         model (VAE): VAE model
-        batch (pytorch.Tensor): input images of size (n, 1, 28, 28), 
+        batch (pytorch.Tensor): input images of size (n, 1, 28, 28),
             where n is the batch length
 
     Returns:
         pytorch.Tensor: reconstructed input. Shape: (n, 1, 28, 28), where n is
-        the batch length  
+        the batch length
 
     """
     model.eval()
     with torch.no_grad():
         reconstructed_x, _, _ = model(batch)
 
-    return reconstructed_x.view(-1, 1, 28, 28)
+    return reconstructed_x.view(-1, *output_shape)
 
 
-def generate(model, n):
+def generate(model, n, output_shape=(1, 28, 28)):
     """
     samples n from Normal(0, I) and decodes them using model
 
@@ -68,10 +68,10 @@ def generate(model, n):
     """
 
     prior_samples = Normal(
-        torch.tensor([0.0, 0.0]),
-        torch.tensor([1.0, 1.0])
+        torch.tensor([0.0]*model.z_dim),
+        torch.tensor([1.0]*model.z_dim)
     ).sample((n,))
     with torch.no_grad():
         generated = model.decode(prior_samples)
 
-    return generated.view(-1, 1, 28, 28)
+    return generated.view(-1, *output_shape)
